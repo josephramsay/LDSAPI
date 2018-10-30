@@ -12,13 +12,17 @@ import sys
 
 PYVER3 = sys.version_info > (3,)
 
-if PYVER3:
-    import urllib.request as u_lib
-    from urllib.error import HTTPError
-else:
-    import urllib2 as u_lib
-    from urllib2 import HTTPError
-    pass
+# if PYVER3:
+#     import urllib.request as u_lib
+#     from urllib.error import HTTPError
+#     pass
+# else:
+#     import urllib2 as u_lib
+#     from urllib2 import HTTPError
+#     pass
+
+from six.moves.urllib.error import HTTPError
+from six.moves.urllib.request import urlopen
 
 from lxml import etree
 
@@ -71,20 +75,22 @@ class LXMLtree(object):
         try:
             if p=='fromstring': etp = self._parse_f(content)    #parse using string method
             else: etp = self._parse_p(content,p)                #parse normally or using provided parser
-        except u_lib.HTTPError as he:
+        except HTTPError as he:
             raise #but this won't happen because LXML pushes HTTP errors up to IO errors
         except IOError as ioe:
-            if re.search('failed to load HTTP resource', ioe.message):
-                raise u_lib.HTTPError(content, 429, 'IOE. Possible HTTP429 Rate Limiting Error. '+ioe.message, None, None)
-            raise u_lib.HTTPError(content, 404, 'IOE. Probable HTTP Error. '+ioe.message, None, None)
+            #if re.search('failed to load HTTP resource', ioe.message): #No longer works on Py3
+            ioem = str(ioe) if PYVER3 else ioe.message
+            if re.search('failed to load HTTP resource', ioem):
+                raise HTTPError(content, 429, 'IOE. Possible HTTP429 Rate Limiting Error. '+ioem, None, None)
+            raise HTTPError(content, 404, 'IOE. Probable HTTP Error. '+ioem, None, None)
         except Exception as e:
             raise
         return etp
     
     def _parse_f(self,content):
-        res = u_lib.urlopen(content).read()
+        res = urlopen(content).read()
         if re.search('API rate limit exceeded',res):
-            raise u_lib.HTTPError(content, 429, 'Masked HTTP429 Rate Limiting Error. ', None, None)
+            raise HTTPError(content, 429, 'Masked HTTP429 Rate Limiting Error. ', None, None)
         return etree.fromstring(res).getroottree()
 
     def _parse_p(self,content,p):

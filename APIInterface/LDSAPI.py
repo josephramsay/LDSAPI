@@ -16,26 +16,37 @@ import datetime as DT
 import time
 import base64
 
-PYVER3 = sys.version_info > (3,)
+# PYVER3 = sys.version_info > (3,)
+# 2 to 3 imports
+# if PYVER3:
+# 	import http.cookiejar as cjar
+# 	import urllib.request as ul2
+# 	import urllib.parse as ul1
+#  	from urllib.parse import urlparse as ULP
+#  	from urllib.error import URLError as UE
+#  	from urllib.error import HTTPError as HE
+#  	from urllib.request import Request as REQ
+# else:
+# 	import cookielib as cjar
+# 	import urllib2 as ul2
+# 	import urllib as ul1
+#  	from urlparse import urlparse as ULP
+#  	from urllib2 import URLError as UE
+#  	from urllib2 import HTTPError as HE
+#  	from urllib2 import Request as REQ
 
-#2 to 3 imports
-if PYVER3:
-	import http.cookiejar as cjar
-	import urllib.request as ul2
-	import urllib.parse as ul1
-	from urllib.parse import urlparse as ULP
-	from urllib.error import URLError as UE
-	from urllib.error import HTTPError as HE
-	from urllib.request import Request as REQ
-else:
-	import cookielib as cjar
-	import urllib2 as ul2
-	import urllib as ul1
-	from urlparse import urlparse as ULP
-	from urllib2 import URLError as UE
-	from urllib2 import HTTPError as HE
-	from urllib2 import Request as REQ
-
+from six.moves import http_cookiejar as cjar
+from six.moves.urllib import request
+#from six.moves.urllib import parse as ul1
+from six.moves.urllib.parse import urlparse
+from six.moves.urllib.error import URLError
+from six.moves.urllib.error import HTTPError
+from six.moves.urllib.request import Request
+	
+try:
+	from LDSUtilityScripts.LinzUtil import LogManager, LDS
+except ImportError:
+	from LinzUtil import LogManager, LDS
 
 
 #from Main import CReader
@@ -48,9 +59,11 @@ else:
 REDIRECT = False
 SLEEP_TIME = 5*60
 SLEEP_RETRY = 5
-MAX_RETRY_ATTEMPTS = 10
+MAX_RETRY_ATTEMPTS = 3
 
 KEYINDEX = 0
+LM = LogManager()
+LM.register('chk',default=True)
 
 class LDSAPI(object):
 
@@ -68,11 +81,12 @@ class LDSAPI(object):
 	url_def = 'lds-l'
 
 	pxy = {'linz': 'webproxy1.ad.linz.govt.nz:3128',
-		   'local': '127.0.0.1:3128'}
-	pxy_def = 'local'
+		   'local': '127.0.0.1:3128',
+		   'noproxy':':'}
+	pxy_def = 'noproxy'
 	
 	ath = {'key':'.apikey3',#'api_llckey',
-		   'basic':'.api_credentials'}
+		   'basic':'.credentials'}
 	ath_def = 'key'
 	
 	def __init__(self):#, creds, cfile):
@@ -96,7 +110,7 @@ class LDSAPI(object):
 		'''Assigns path/host params or tries to extract them from a url'''
 		self.format = format
 		if url:
-			p = ULP(url)
+			p = urlparse(url)
 			self.scheme = p.scheme
 			self.host = p.netloc
 			self.path = p.path
@@ -108,6 +122,7 @@ class LDSAPI(object):
 	def setProxyRef(self, pref):
 		#proxy = ul2.ProxyHandler({'http': self.pxy[pref]})
 		#self.openerstrs_ntlm = ul2.build_opener(proxy)		
+		self.pref = pref
 		self.openerstrs_ntlm = self.pxy[pref]	
 		
 	def setAuthentication(self, creds, cfile, auth):
@@ -131,8 +146,8 @@ class LDSAPI(object):
 		if type(creds) is dict:
 			self.usr, self.pwd, self.dom = [creds[i] for i in 'upd']
 		else:
-			self.usr, self.pwd, self.dom = creds
-		self.b64a = self.encode(
+			self.usr, self.pwd, self.dom = (*creds,None,None)[:3]
+		self.b64a = LDSAPI.encode_auth(
 			{'user': self.usr, 'pass': self.pwd, 'domain': self.dom} 
 			if self.dom and self.dom != 'WGRP' else 
 			{'user': self.usr, 'pass': self.pwd}
@@ -159,7 +174,10 @@ class LDSAPI(object):
 	def getResponse(self):
 		return {'info':self.info,'head':self.head,'data':self.data}
 	
-		
+	def setExteralLogManager(self,lm):
+		global LM
+		LM = lm
+	
 	@staticmethod
 	def parseHeaders(head):
 		# ['Server: nginx\r\n', 
@@ -221,26 +239,28 @@ class LDSAPI(object):
 		if REDIRECT:				  
 			h1,h2 = REDIRECT.BindableHTTPHandler,REDIRECT.BindableHTTPSHandler
 		else:
-			h1,h2 = ul2.HTTPHandler, ul2.HTTPSHandler
+			h1,h2 = request.HTTPHandler, request.HTTPSHandler
 		
-		handlers = [h1(), h2(), ul2.HTTPCookieProcessor(self.cookies)
-				]
-		if purl:
-			handlers += [ul2.ProxyHandler({ps:purl for ps in pscheme}),]
-			#handlers += [ul2.ProxyHandler({ps:purl}) for ps in pscheme]
+		handlers = [h1(), h2(), request.HTTPCookieProcessor(self.cookies)]
 		
-		if puser and ppass:
-			pm = ul2.HTTPPasswordMgrWithDefaultRealm()
-			pm.add_password(None, purl, puser, ppass)
-			handlers += [ul2.ProxyBasicAuthHandler(pm),]
+		if self.pref != 'noproxy' and purl and len(purl)>1:
+			#if not noproxy and a proxy url is provided (and its not the placeholder url ie noproxy=':') add a handler
+			handlers += [request.ProxyHandler({ps:purl for ps in pscheme}),]
+			#handlers += [request.ProxyHandler({ps:purl}) for ps in pscheme]
 		
-		return ul2.build_opener(*handlers)
+			if puser and ppass:
+				#if proxy user/pass provided and a proxy auth handler
+				pm = request.HTTPPasswordMgrWithDefaultRealm()
+				pm.add_password(None, purl, puser, ppass)
+				handlers += [request.ProxyBasicAuthHandler(pm),]
+		
+		return request.build_opener(*handlers)
 
 	def connect(self, plus='', head=None, data={}):		
 		'''URL connection wrapper, wraps URL strings in request objects, applying selected openers'''
 		
 		#self.path='/services/api/v1/layers/{id}/versions/{version}/import/'
-		self.setRequest(REQ('{0}://{1}{2}{3}'.format(self.scheme,self.host, self.path, plus)))
+		self.setRequest(Request('{0}://{1}{2}{3}'.format(self.scheme,self.host, self.path, plus)))
 		
 		# Add user header if provided 
 		if head:
@@ -248,68 +268,91 @@ class LDSAPI(object):
 			
 		# Add user data if provided
 		if data: #or true #for testing
-			#NB. adding a data component in ul2 switches request from GET to POST
+			#NB. adding a data component in request switches request from GET to POST
 			data = urllib.urlencode(data)
 			self.getRequest().add_data(data)
 			
 		return self.conn(self.getRequest())
 
-	def conn(self,request):
+	def conn(self,connreq):
 		'''URL connection wrappercatching common exceptions and retrying where necessary
-		param: request can be either a url string or a request object
+		param: connreq can be either a url string or a request object
 		'''
-		if isinstance(request,str) or isinstance(request,basestring):
-			self.setRequest(REQ(request))
+		last_exc = None
+		if isinstance(connreq,str) or isinstance(connreq,basestring):
+			self.setRequest(Request(connreq))
 			
 		if self.auth:
 			self.getRequest().add_header("Authorization", self.auth)
 			
-		ul2.install_opener(self.opener(purl=self.openerstrs_ntlm))
+		request.install_opener(self.opener(purl=self.openerstrs_ntlm))
 		
 		retry = MAX_RETRY_ATTEMPTS
 		while retry:
 			try:
-				handle = ul2.urlopen(self.getRequest())#,data)
+				handle = request.urlopen(self.getRequest())#,data)
 				if handle: return handle
 				#self.setResponse(handle)
 				#break
-			except HE as he:
+			except HTTPError as he:
+				last_exc = he
 				if re.search('429',str(he)):
-					print ('RateLimit Error {0}. Sleeping for {1} seconds awaiting 429 expiry. Attempt {2}'.format(he,SLEEP_TIME,MAX_RETRY_ATTEMPTS-retry))
+					msg = 'RateLimit Error {0}. Sleeping for {1} seconds awaiting 429 expiry. Attempt {2}'.format(he,SLEEP_TIME,MAX_RETRY_ATTEMPTS-retry)
+					LM.logdef(msg)
 					time.sleep(SLEEP_TIME)
 					retry -= 1
 					continue
-				elif re.search('401|500',str(he)):
-					print ('HTTP Error {0} Returns {1}. Attempt {2}'.format(self.getRequest().get_full_url(),he,MAX_RETRY_ATTEMPTS-retry))
+				elif retry and re.search('401|403|500',str(he)):
+					msg = 'HTTP Error {0} Returns {1}. Attempt {2}'.format(LDS.kmask(self.getRequest().get_full_url()),he,MAX_RETRY_ATTEMPTS-retry)
+					LM.logdef(msg)
+					retry -= 1
+					continue
+				elif retry and re.search('502',str(he)):
+					msg = 'Proxy Error {0} Returns {1}. Attempt {2}'.format(LDS.kmask(self.getRequest().get_full_url()),he,MAX_RETRY_ATTEMPTS-retry)
+					LM.logdef(msg)
+					retry -= 1
+					continue
+				elif retry and re.search('410',str(he)):
+					msg = 'Layer removed {0} Returns {1}. Attempt {2}'.format(LDS.kmask(self.getRequest().get_full_url()),he,MAX_RETRY_ATTEMPTS-retry)
+					LM.logdef(msg)
+					retry -= 1
+					continue
+				elif retry:
+					msg = 'Error with request {0} returns {1}'.format(LDS.kmask(self.getRequest().get_full_url()),he)
+					LM.logdef(msg)
 					retry -= 1
 					continue
 				else:
-					print ('Error with request {0} returns {1}'.format(self.getRequest().get_full_url(),he))
-			except UE as ue: 
-				print('URL error on connect', ue)
-				print(ul2.request.getproxies())
+					#Retries have been exhausted, raise the active httpexception
+					raise HTTPError(he.msg+msg)
+			except URLError as ue:
+				LM.logdef('URL error on connect '+ue)
+				#print(request.request.getproxies())
 				raise ue
-			except ValueError as ve: 
-				print('Value error on connect', ve)
+			except ValueError as ve:
+				LM.logdef('Value error on connect '+ve)
 				raise ve
-			except KeyError as ee:
-				#redundant now since link keyerror caught in parseHeaders
-				if not re.search('link',str(ee)): raise
-				retry = 0
 			except Exception as xe:
-				print('Other error on connect', xe)
+				LM.logdef('Other error on connect '+str(xe))
+				raise xe
 		else:
-			raise ee
+			raise last_exc
 		#except Exception as e:
 		#	print e
 		
-	def _testalt(self,ref='basic'):
-		p = os.path.join(os.path.dirname(__file__),cxf or LDSAPI.ath[ref])
-		self.setAuthentication(Authentication.creds,p, ref)
+# 	def _testalt(self,ref='basic'):
+# 		p = os.path.join(os.path.dirname(__file__),cxf or LDSAPI.ath[ref])
+# 		self.setAuthentication(Authentication.creds,p, ref)
 		
-	def encode(self,auth):
-		return base64.encodestring('{0}:{1}'.format(auth['user'], auth['pass'])).replace('\n', '')
-
+	@staticmethod
+	def encode_auth(auth):
+		'''Build and b64 encode a http authentication string. [Needs to be bytes str, hence en/decode()]'''
+		if 'domain' in auth:
+			astr = '{d}\{u}:{p}'.format(u=auth['user'], p=auth['pass'], d=auth['domain']).strip().encode()
+		else:
+			astr = '{u}:{p}'.format(u=auth['user'], p=auth['pass']).strip().encode()
+		return base64.b64encode(astr).decode()
+		
 	def fetchPages(self,psub=''):
 		
 		upd = []
@@ -323,7 +366,7 @@ class LDSAPI(object):
 				self.connect(plus=pstr)
 				#api.dispReq(api.req)
 				#api.dispRes(api.res)
-			except HE:
+			except HTTPError:
 				morepages = False
 				raise
 				#continue
@@ -341,19 +384,23 @@ class LDSAPI(object):
 					
 		return upd
 	
-	def dispReq(self,req):
+	@staticmethod
+	def dispReq(req):
 		print ('Request\n-------\n')
-		print (req.get_full_url(),'auth',req.get_header('Authorization'))
+		print (LDS.kmask(req.get_full_url()),'auth',req.get_header('Authorization'))
 		
-	def dispRes(self,res):
+	@staticmethod
+	def dispRes(res):
 		print ('Response\n--------\n')
 		print (res.info())
-	
-	def dispJSON(self,res):
+		
+	@staticmethod
+	def dispJSON(res):
 		for l in json.loads(res.read()):
 			print ('{0} - {1}\n'.format(l[0],l[1]))
-		
-	def _populate(self,data):
+			
+	@staticmethod
+	def _populate(data):
 		return json.dumps({"name": data[0],"type": data[1],"description": data[2], 
 					  "categories": data[3], "user": data[4], "options":{"username": data[5],"password": data[6]},
 					  "url_remote": data[7],"scan_schedule": data[8]})
@@ -607,16 +654,33 @@ class StaticFetch():
 		
 	@classmethod
 	def get(cls,uref=None,pref=None,korb=None,cxf=None):
+		'''get requested URL using specified defs'''
 		uref = uref or cls.UREF
 		pref = pref or cls.PREF
-		if korb: aref = korb.lower()
-		else: aref = cls.AREF
-		p = os.path.join(os.path.dirname(__file__),cxf or LDSAPI.ath[aref])
-		method = (Authentication.creds,p) if aref=='basic' else (Authentication.apikey,p)
+		if isinstance(korb,dict):
+			return StaticFetch._get(uref,pref,korb,cxf) 
+		elif korb.lower() in ['key','basic']:
+			aref = korb.lower()
+		else: 
+			aref = cls.AREF
+		method = (Authentication.creds,cxf or LDSAPI.ath[aref]) if aref=='basic' else (Authentication.apikey,cxf or LDSAPI.ath[aref])
 		
 		da = DataAccess(*method,uref=uref,pref=pref,aref=aref)
 		return da.api.conn(uref)
 		#return res or da.api.getResponse()['data']
+		
+	@classmethod
+	def _get(cls,uref=None,pref=None,korb={},cxf=None):
+		'''korb must be a dict containing {'key':'ABC...','up':['user','pass'],'kfile':'apikey','cfile':'creds'}'''
+		kk0 = list(korb.keys())[0]
+		kd = {
+			'key'	:(Authentication.direct,'key'),
+			'up'	:(Authentication.direct,'basic'),
+			'kfile'	:(Authentication.apikey,'key'),
+			'cfile'	:(Authentication.creds, 'basic')
+		}
+		da = DataAccess(kd[kk0][0],korb[kk0],uref=uref,pref=pref,aref=kd[kk0][1])
+		return da.api.conn(uref)
 		
 class DataAccess(APIAccess):
 	'''Convenience class for accessing commonly needed data-api data'''
@@ -665,7 +729,7 @@ class DataAccess(APIAccess):
 			if 'data' in pagereq:
 				try:
 					d = self.readDetailFields(i)
-				except HE as he:
+				except HTTPError as he:
 					herror[str(i)] = he
 					continue
 				try:
@@ -694,7 +758,7 @@ class DataAccess(APIAccess):
 				try:
 					#returns the permissions for group.everyone only
 					p = self.readPermissionFields(i)
-				except HE as he:
+				except HTTPError as he:
 					herror[str(i)] = he
 					continue
 				
@@ -723,17 +787,16 @@ class DataAccess(APIAccess):
 
 '''Copied from LDSChecker for availability'''
 		
+class AuthenticationException(Exception):pass
 class Authentication(object):
 	'''Static methods to read keys/user/pass from files'''
-	
-	@staticmethod
-	def userpass(upfile):
-		return (Authentication.searchfile(upfile,'username'),Authentication.searchfile(upfile,'password'))
 		
 	@staticmethod
 	def apikey(keyfile,kk='key',keyindex=None):
 		'''Returns current key from a keyfile advancing KEYINDEX on subsequent calls (if ki not provided)'''
 		global KEYINDEX
+		key = Authentication.searchfile(keyfile,'{0}'.format(kk))
+		if key: return key
 		key = Authentication.searchfile(keyfile,'{0}{1}'.format(kk,keyindex or KEYINDEX))
 		if not key and not keyindex:
 			KEYINDEX = 0
@@ -743,20 +806,37 @@ class Authentication(object):
 		return key
 	
 	@staticmethod
+	def direct(value):
+		'''Returns arg for cases where user just wants to submit a key/userpass directly'''
+		return value
+		
+	@staticmethod
 	def creds(cfile):
 		'''Read CIFS credentials file'''
 		return (Authentication.searchfile(cfile,'username'),\
 				Authentication.searchfile(cfile,'password'),\
 				Authentication.searchfile(cfile, 'domain'))
+		
+	@staticmethod
+	def userpass(cfile):
+		return creds(cfile)[:2]
+			
+	#@staticmethod
+	#def userpass(upfile):
+	#	return (Authentication.searchfile(upfile,'username'),Authentication.searchfile(upfile,'password'))
 	
 	@staticmethod
 	def searchfile(spf,skey,default=None):
+		'''Given a file name incl path look for the file in the provided path, the home dir and 
+		the current dir then checks this file for the key/val named in skey'''
 		#value = default
 		#look in current then app then home
 		sp,sf = os.path.split(spf)
 		spath = (sp,'',os.path.expanduser('~'),os.path.dirname(__file__))
-		first = [os.path.join(p,sf) for p in spath if os.path.lexists(os.path.join(p,sf))][0]
-		with open(first,'r') as h:
+		verified = [os.path.join(p,sf) for p in spath if os.path.lexists(os.path.join(p,sf))]
+		if not verified:
+			raise AuthenticationException('Cannot find requested file {}'.format(sf))
+		with open(verified[0],'r') as h:
 			for line in h.readlines():
 				k = re.search('^{key}=(.*)$'.format(key=skey),line)
 				if k: return k.group(1)
@@ -772,7 +852,6 @@ class Authentication(object):
 			key = Authentication.apikey(kfile)
 			return ('Authorization', 'key {0}'.format(key))
 		return None # Throw something
-
 
 class APIFunctionTest(object):
 	'''Class will not run as-is but illustrates by example api ue and the paging mechanism'''
@@ -821,7 +900,7 @@ class APIFunctionTest(object):
 		print(res1)
 		res2 = StaticFetch.get(uref='https://data.linz.govt.nz/layer/51414')
 		print(res2)
-		
+
 def creds(cfile):
 	'''Read CIFS credentials file'''
 	return {
