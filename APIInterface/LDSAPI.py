@@ -38,10 +38,11 @@ import base64
 from six.moves import http_cookiejar as cjar
 from six.moves.urllib import request
 #from six.moves.urllib import parse as ul1
-from six.moves.urllib.parse import urlparse
+from six.moves.urllib.parse import urlparse, urlencode
 from six.moves.urllib.error import URLError
 from six.moves.urllib.error import HTTPError
 from six.moves.urllib.request import Request
+from six import string_types
 	
 try:
 	from LDSUtilityScripts.LinzUtil import LogManager, LDS
@@ -146,6 +147,7 @@ class LDSAPI(object):
 		if type(creds) is dict:
 			self.usr, self.pwd, self.dom = [creds[i] for i in 'upd']
 		else:
+			self.usr = 'pp'
 			self.usr, self.pwd, self.dom = (*creds,None,None)[:3]
 		self.b64a = LDSAPI.encode_auth(
 			{'user': self.usr, 'pass': self.pwd, 'domain': self.dom} 
@@ -269,7 +271,7 @@ class LDSAPI(object):
 		# Add user data if provided
 		if data: #or true #for testing
 			#NB. adding a data component in request switches request from GET to POST
-			data = urllib.urlencode(data)
+			data = urlencode(data)
 			self.getRequest().add_data(data)
 			
 		return self.conn(self.getRequest())
@@ -279,7 +281,7 @@ class LDSAPI(object):
 		param: connreq can be either a url string or a request object
 		'''
 		last_exc = None
-		if isinstance(connreq,str) or isinstance(connreq,basestring):
+		if isinstance(connreq,str) or isinstance(connreq,string_types):
 			self.setRequest(Request(connreq))
 			
 		if self.auth:
@@ -505,7 +507,7 @@ class DataAPI(LDSAPI):
 		super(DataAPI,self).__init__()
 		
 	def setParams(self, sec='list', pth='dgt_data', host=LDSAPI.url_def, format='json', id=None, version=None, type=None):
-		super(DataAPI,self).setCommonParams(host=h,format=format,sec=sec,pth=pth)
+		super(DataAPI,self).setCommonParams(host=host,format=format,sec=sec,pth=pth)
 		
 		if id and re.search('{id}',self.path): self.path = self.path.replace('{id}',str(id))
 		if version and re.search('{version}',self.path): self.path = self.path.replace('{version}',str(version))
@@ -544,7 +546,7 @@ class SourceAPI(LDSAPI):
 		super(SourceAPI,self).__init__()
 		
 	def setParams(self,sec='list',pth='sgt_sources',host='lds-l',format='json',id=None,type=None,source_id=None,scan_id=None,datasource_id=None):
-		super(DataAPI,self).setCommonParams(host=h,format=format,sec=sec,pth=pth)
+		super(DataAPI,self).setCommonParams(host=host,format=format,sec=sec,pth=pth)
 
 		#insert optional args if available
 		if id and re.search('{id}',self.path): self.path = self.path.replace('{id}',str(id))
@@ -699,7 +701,7 @@ class DataAccess(APIAccess):
 					l = l[ni]
 				else:
 					l = None
-		if isinstance(l, unicode):
+		if isinstance(l, string_types):
 			return l.encode('utf8')
 		else:
 			return l 
