@@ -75,6 +75,7 @@ class LXMLtree(object):
         try:
             if p=='fromstring': etp = self._parse_f(content)    #parse using string method
             else: etp = self._parse_p(content,p)                #parse normally or using provided parser
+<<<<<<< HEAD
         except HTTPError as he:
             raise #but this won't happen because LXML pushes HTTP errors up to IO errors
         except IOError as ioe:
@@ -83,14 +84,28 @@ class LXMLtree(object):
             if re.search('failed to load HTTP resource', ioem):
                 raise HTTPError(content, 429, 'IOE. Possible HTTP429 Rate Limiting Error. '+ioem, None, None)
             raise HTTPError(content, 404, 'IOE. Probable HTTP Error. '+ioem, None, None)
+=======
+        except u_lib.HTTPError as he:
+            raise #but this won't happen because LXML pushes HTTP errors up to IO errors
+        except IOError as ioe:
+            if re.search('failed to load HTTP resource', ioe.message):
+                raise u_lib.HTTPError(content, 429, 'IOE. Possible HTTP429 Rate Limiting Error. '+ioe.message, None, None)
+            raise u_lib.HTTPError(content, 404, 'IOE. Probable HTTP Error. '+ioe.message, None, None)
+>>>>>>> origin/master
         except Exception as e:
             raise
         return etp
     
     def _parse_f(self,content):
+<<<<<<< HEAD
         res = urlopen(content).read()
         if re.search('API rate limit exceeded',res):
             raise HTTPError(content, 429, 'Masked HTTP429 Rate Limiting Error. ', None, None)
+=======
+        res = u_lib.urlopen(content).read()
+        if re.search('API rate limit exceeded',res):
+            raise u_lib.HTTPError(content, 429, 'Masked HTTP429 Rate Limiting Error. ', None, None)
+>>>>>>> origin/master
         return etree.fromstring(res).getroottree()
 
     def _parse_p(self,content,p):
