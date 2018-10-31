@@ -148,7 +148,8 @@ class LDSAPI(object):
 			self.usr, self.pwd, self.dom = [creds[i] for i in 'upd']
 		else:
 			self.usr = 'pp'
-			self.usr, self.pwd, self.dom = (*creds,None,None)[:3]
+			#self.usr, self.pwd, self.dom = (*creds,None,None)[:3] #only since py3.5
+			self.usr, self.pwd, self.dom = (creds+(None,None))[:3]
 		self.b64a = LDSAPI.encode_auth(
 			{'user': self.usr, 'pass': self.pwd, 'domain': self.dom} 
 			if self.dom and self.dom != 'WGRP' else 
@@ -406,7 +407,7 @@ class LDSAPI(object):
 		return json.dumps({"name": data[0],"type": data[1],"description": data[2], 
 					  "categories": data[3], "user": data[4], "options":{"username": data[5],"password": data[6]},
 					  "url_remote": data[7],"scan_schedule": data[8]})
-			  
+		
 # GET
 # /services/api/v1/data/
 # Read-only, filterable list views.
