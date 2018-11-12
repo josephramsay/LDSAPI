@@ -16,24 +16,7 @@ import datetime as DT
 import time
 import base64
 
-# PYVER3 = sys.version_info > (3,)
-# 2 to 3 imports
-# if PYVER3:
-# 	import http.cookiejar as cjar
-# 	import urllib.request as ul2
-# 	import urllib.parse as ul1
-#  	from urllib.parse import urlparse as ULP
-#  	from urllib.error import URLError as UE
-#  	from urllib.error import HTTPError as HE
-#  	from urllib.request import Request as REQ
-# else:
-# 	import cookielib as cjar
-# 	import urllib2 as ul2
-# 	import urllib as ul1
-#  	from urlparse import urlparse as ULP
-#  	from urllib2 import URLError as UE
-#  	from urllib2 import HTTPError as HE
-#  	from urllib2 import Request as REQ
+from http.client import HTTPMessage
 
 from six.moves import http_cookiejar as cjar
 from six.moves.urllib import request
@@ -43,6 +26,7 @@ from six.moves.urllib.error import URLError
 from six.moves.urllib.error import HTTPError
 from six.moves.urllib.request import Request
 from six import string_types
+from numpy.core import info
 	
 try:
 	from LDSUtilityScripts.LinzUtil import LogManager, LDS
@@ -97,15 +81,17 @@ class LDSAPI(object):
 
 		self.setProxyRef(self.pxy_def)
 		# cant set auth because we dont know yet what auth type to use, doesnt make sense to set up on default
-		#self.setAuthentication(creds, self.ath[self.ath_def], self.ath_def)
+		# self.setAuthentication(creds, self.ath[self.ath_def], self.ath_def)
 		
 		self.scheme = self.sch_def
 		self.auth = None
+		self.head = {}
 
 
 	@abstractmethod
 	def setParams(self):
 		'''abstract host/path setting method'''
+		pass
 		
 	def setCommonParams(self,scheme=None,host=None,format='json',sec=None,pth=None,url=None):
 		'''Assigns path/host params or tries to extract them from a url'''
@@ -133,15 +119,16 @@ class LDSAPI(object):
 		elif auth == 'key':
 			self._setKeyAuth(creds, cfile)
 		else:
+			LM.chk_err('Auth error. Need key/basic specifier',LM._LogExtra('LDSAPI','sA'))
 			raise Exception('Incorrect auth configuration supplied')
 		
 	def _setBasicAuth(self,creds,cfile):
 		self.setCredentials(creds(cfile))
-		self.setAuth("Basic {0}".format(self.b64a))
+		self._setRequestAuth("Basic {0}".format(self.b64a))
 		
 	def _setKeyAuth(self,creds,cfile):
-		self.setKey(creds(cfile))
-		self.setAuth("key {0}".format(self.key))
+		self._setRequestKey(creds(cfile))
+		self._setRequestAuth("key {0}".format(self.key))
 			
 	def setCredentials(self, creds):
 		if type(creds) is dict:
@@ -156,26 +143,64 @@ class LDSAPI(object):
 			{'user': self.usr, 'pass': self.pwd}
 			)
 
-	def setKey(self, creds):
+		#---------------------------------------------------------------------------
+
+	def _setRequestKey(self, creds):
 		self.key = creds['k'] if type(creds) is dict else creds
 		
-	def setAuth(self,auth):
+	def _setRequestAuth(self,auth):
 		self.auth = auth
 		
 	def setRequest(self,req):
-		self.req = req
+		if isinstance(req,string_types):
+			self.req_str = req
+			self.req = Request(req)
+		else:
+			self.req_str = req.full_url
+			self.req = req
+			
+	def _setRequestData(self,data):
+		self.data = data
+		
+	def _setRequestInfo(self,info):
+		self.info = info
+		
+	def _setRequestHead(self,name,val):
+		self.head[name] = val
+		
+	def addRequestHeader(self,name,head):
+		self.req.add_header(name,head)
+		
+	def addRequestData(self,data=None):
+		self.req.add_data(data if data else self.data)
 		
 	def getRequest(self):
-		return self.req	
-		
+		return self.req
+
+	def getRequestStr(self,mask = True):
+		return LDS.kmask(self.req_str) if mask else self.req_str
+	
+	#---------------------------------------------------------------------------
+	
 	def setResponse(self,res):
 		self.res = res
-		self.data = res.read()
-		self.info = res.info()
-		self.head = LDSAPI.parseHeaders(self.info.headers) if hasattr(self.info,'headers') else None
+		self._setResponseData(res.read())
+		self._setResponseInfo(res.info())
+		self._setResponseHead(LDSAPI.parseHeaders(self.info._headers) if hasattr(self.info,'_headers') else None)
+		
+	def _setResponseData(self,respdata):
+		self.respdata = respdata
+		
+	def _setResponseHead(self,head):
+		self.head = head
+		
+	def _setResponseInfo(self,info):
+		self.info = info
 		
 	def getResponse(self):
-		return {'info':self.info,'head':self.head,'data':self.data}
+		return {'info':self.respinfo,'head':self.resphead,'data':self.respdata}
+	
+	#---------------------------------------------------------------------------
 	
 	def setExteralLogManager(self,lm):
 		global LM
@@ -211,13 +236,24 @@ class LDSAPI(object):
 				  'vary':'Vary:\s(.*)\r\n',
 				  'link':'Link:\s(.*)\r\n',
 				  'vary-acc':'Vary:\s(.*?)\r\n',
-				  'x-k-gentime':'X-K-gentime:\s(.*?)\r\n'}
+				  'x-k-gentime':'X-K-gentime:\s(.*?)\r\n',
+				  'oauth-scopes':'OAuth-Scopes:\s(.*?)\r\n'}
 
-		for k in relist.keys():
-			s = re.search(relist[k],'|'.join(head))
-			if s: h[k] = s.group(1)
-
+		if isinstance(head,HTTPMessage):
+			for k in relist.keys():
+				s = [i[1] for i in head._headers if i[0].lower()==k]
+				if s: h[k] = s[0]
+		elif isinstance(head,string_types):
+			for k in relist.keys():
+				s = re.search(relist[k],'|'.join(head))
+				if s: h[k] = s.group(1)
+		elif isinstance(head,list):
+			for k in relist.keys():
+				s = [i[1] for i in head if i[0].lower()==k]
+				if s: h[k] = s[0]
+				
 		# ---------------------
+		#Pull apart link string, if its available
 		lnlist = {'sort-name':'<(http.*?)>;\s+rel="sort-name"',
 				  'sort-name-desc':'<(http.*?)>;\s+rel="sort-name-desc"',
 				  'page-previous':'<(http.*?)>;\s+rel="page-previous"',
@@ -259,34 +295,40 @@ class LDSAPI(object):
 		
 		return request.build_opener(*handlers)
 
-	def connect(self, plus='', head=None, data={}):		
+	def connect(self, plus='', head=None, data={}, auth=None):		
 		'''URL connection wrapper, wraps URL strings in request objects, applying selected openers'''
 		
 		#self.path='/services/api/v1/layers/{id}/versions/{version}/import/'
-		self.setRequest(Request('{0}://{1}{2}{3}'.format(self.scheme,self.host, self.path, plus)))
+		self.setRequest('{0}://{1}{2}{3}'.format(self.scheme,self.host, self.path, plus))
 		
 		# Add user header if provided 
 		if head:
-			self.getRequest().add_header(shlex.split(head)[0].strip("(),"),shlex.split(head)[1].strip("(),"))
+			self._setRequestHead(head)
+			self.addRequestHeader(shlex.split(head)[0].strip("(),"),shlex.split(head)[1].strip("(),"))
+		
+		if auth:
+			self._setRequestAuth(auth)
+			self.addRequestHeader("Authorization", auth)
 			
 		# Add user data if provided
 		if data: #or true #for testing
 			#NB. adding a data component in request switches request from GET to POST
 			data = urlencode(data)
-			self.getRequest().add_data(data)
+			self._setRequestData(data)
+			self.addRequestData(data)
 			
 		return self.conn(self.getRequest())
 
-	def conn(self,connreq):
+	def conn(self,req):
 		'''URL connection wrappercatching common exceptions and retrying where necessary
 		param: connreq can be either a url string or a request object
 		'''
-		last_exc = None
-		if isinstance(connreq,str) or isinstance(connreq,string_types):
-			self.setRequest(Request(connreq))
-			
+		self.setRequest(req)
+		req_str = self.getRequestStr()
+
+		#if self.auth is set it should have been added to the request header... might be legacy where that hasn't happened
 		if self.auth:
-			self.getRequest().add_header("Authorization", self.auth)
+			self.addRequestHeader("Authorization", self.auth)
 			
 		request.install_opener(self.opener(purl=self.openerstrs_ntlm))
 		
@@ -301,42 +343,41 @@ class LDSAPI(object):
 				last_exc = he
 				if re.search('429',str(he)):
 					msg = 'RateLimit Error {0}. Sleeping for {1} seconds awaiting 429 expiry. Attempt {2}'.format(he,SLEEP_TIME,MAX_RETRY_ATTEMPTS-retry)
-					LM.logdef(msg)
+					LM.chk_error(msg,LM._LogExtra('LAc','hrl',url=req_str))
 					time.sleep(SLEEP_TIME)
 					retry -= 1
 					continue
 				elif retry and re.search('401|403|500',str(he)):
-					msg = 'HTTP Error {0} Returns {1}. Attempt {2}'.format(LDS.kmask(self.getRequest().get_full_url()),he,MAX_RETRY_ATTEMPTS-retry)
-					LM.logdef(msg)
+					msg = 'HTTP Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
+					LM.chk_error(msg,LM._LogExtra('LAc','hcx',url=req_str))
 					retry -= 1
 					continue
 				elif retry and re.search('502',str(he)):
-					msg = 'Proxy Error {0} Returns {1}. Attempt {2}'.format(LDS.kmask(self.getRequest().get_full_url()),he,MAX_RETRY_ATTEMPTS-retry)
-					LM.logdef(msg)
+					msg = 'Proxy Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
+					LM.chk_error(msg,LM._LogExtra('LAc','hpe',url=req_str))
 					retry -= 1
 					continue
 				elif retry and re.search('410',str(he)):
-					msg = 'Layer removed {0} Returns {1}. Attempt {2}'.format(LDS.kmask(self.getRequest().get_full_url()),he,MAX_RETRY_ATTEMPTS-retry)
-					LM.logdef(msg)
+					msg = 'Layer removed {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
+					LM.chk_error(msg,LM._LogExtra('LAc','hlr',url=req_str))
 					retry -= 1
 					continue
 				elif retry:
-					msg = 'Error with request {0} returns {1}'.format(LDS.kmask(self.getRequest().get_full_url()),he)
-					LM.logdef(msg)
+					msg = 'Error with request {0} returns {1}'.format(req_str,he)
+					LM.chk_error(msg,LM._LogExtra('LAc','hx',url=req_str))
 					retry -= 1
 					continue
 				else:
 					#Retries have been exhausted, raise the active httpexception
 					raise HTTPError(he.msg+msg)
 			except URLError as ue:
-				LM.logdef('URL error on connect '+ue)
-				#print(request.request.getproxies())
+				LM.chk_error('URL error on connect '+ue,LM._LogExtra('LAc','ue',url=req_str))
 				raise ue
 			except ValueError as ve:
-				LM.logdef('Value error on connect '+ve)
+				LM.chk_error('Value error on connect '+ue,LM._LogExtra('LAc','ve',url=req_str))
 				raise ve
 			except Exception as xe:
-				LM.logdef('Other error on connect '+str(xe))
+				LM.chk_error('Othr error on connect'+str(xe),LM._LogExtra('LAc','xe',url=req_str))
 				raise xe
 		else:
 			raise last_exc
@@ -366,14 +407,18 @@ class LDSAPI(object):
 			page = page + 1
 			pstr = psub+'&page={0}'.format(page)
 			try:
-				self.connect(plus=pstr)
+				res = self.connect(plus=pstr)
+				if res: self.setResponse(res)
+				else: raise HTTPError('No Response using URL {}'.format(pstr))
 				#api.dispReq(api.req)
 				#api.dispRes(api.res)
-			except HTTPError:
+			except HTTPError as he:
+				LM.chk_error('HTTP Error on page fetch '+he,LM._LogExtra('LAfp','he',url=pstr))
 				morepages = False
 				raise
 				#continue
-			#the logic here is weird/redundant, if no last page then its the last page otherwise save the last page and finish when page is last
+			# The logic here is a bit redundant but basically if no last page found then its prob the last page
+			# otherwise save the last page value and compare to current page. If they're equal get off loop
 			if 'page-last' in self.head: 
 				pagel = self.head['page-last']['p']
 			else:
@@ -382,7 +427,7 @@ class LDSAPI(object):
 			if page == pagel:
 				morepages = False
 			
-			jdata = json.loads(self.data)
+			jdata = json.loads(self.respdata.decode())
 			upd += [jdata,] if isinstance(jdata,dict) else jdata
 					
 		return upd
@@ -661,8 +706,8 @@ class StaticFetch():
 		uref = uref or cls.UREF
 		pref = pref or cls.PREF
 		if isinstance(korb,dict):
-			return StaticFetch._get(uref,pref,korb,cxf) 
-		elif korb.lower() in ['key','basic']:
+			return cls._get(uref,pref,korb,cxf) 
+		elif korb and korb.lower() in ['key','basic']:
 			aref = korb.lower()
 		else: 
 			aref = cls.AREF
@@ -703,7 +748,7 @@ class DataAccess(APIAccess):
 				else:
 					l = None
 		if isinstance(l, string_types):
-			return l.encode('utf8')
+			return l.encode('utf-8')
 		else:
 			return l 
 		#if n2: return l[n1][n2].encode('utf8') if n1 in l and n2 in l[n1] else None
@@ -726,61 +771,82 @@ class DataAccess(APIAccess):
 		herror = {}
 		
 		for i in self.readAllIDs():
-		#print 'WARNING. READING LDS-API-ID SUBSET'
-		#for i in [1572,1993,2052,1293,2100]:#[1993,1996,1624,2268,626,407]:
+		#print ('WARNING. READING LDS-API-ID SUBSET')
+		#for i in [52109,51779]:#1572,1993,2052,1293,2100]:#[1993,1996,1624,2268,626,407]:
 			detail[str(i)] = {}
+			herror[str(i)] = ()
 			if 'data' in pagereq:
-				try:
-					d = self.readDetailFields(i)
-				except HTTPError as he:
-					herror[str(i)] = he
-					continue
-				try:
-					dx = {'name':('name',),'type':('type',),'group':('group','id'),'kind':('kind',),'cat':('categories',0,'slug'),'crs':('data','crs'),\
-						  'lic-ttl':('license','title'),'lic-typ':('license','type'),'lic-ver':('license','version'),\
-						  'data-pky':('data','primary_key_fields'),'data-geo':('data','geometry_field'),'data-fld':('data','fields'),\
-						  'date-pub':('published_at',),'date-fst':('first_published_at',),'date-crt':('created_at',),'date-col':('collected_at',)
-						  }
-					dd = {k:self._set(d,dx[k]) for k in dx}
-					#special postprocess
-					dd['data-pky'] = self._set(','.join(dd['data-pky']))  
-					dd['data-fld'] = self._set(','.join([f['name'] for f in dd['data-fld']]))   
-					detail[str(i)].update(dd)
-
-				except IndexError as ie:
-					#not raising this as an error since it only occurs on 'test' layers
-					print ('{0} error getting {1},{2}'.format(ie,d['id'],d['name']))
-				except TypeError as te:
-					print ('{0} error on layer {1}/{2}'.format(te,d['id'],d['name']))
-					continue
-				except Exception as e:
-					print ('{0} error on layer {1}/{2}'.format(e,d['id'],d['name']))
-					raise
+				d,dh = self._readDetailData(i)
+				detail[str(i)].update(d)
+				if dh: herror[str(i)] += dh
 			
 			if 'permission' in pagereq:
-				try:
-					#returns the permissions for group.everyone only
-					p = self.readPermissionFields(i)
-				except HTTPError as he:
-					herror[str(i)] = he
-					continue
-				
-				try:
-					px = {'prm-grp':('id',),'prm-typ':('permission',),'prm-name':('group','name')}
-					pp = {k:self._set(p,px[k]) for k in px} if p else {p:None for p in px}
-					detail[str(i)].update(pp)
-
-				except IndexError as ie:
-					#not raising this as an error since it only occurs on 'test' layers
-					print ('{0} error getting {1},{2}'.format(ie,i,p['name']))
-				except TypeError as te:
-					print ('{0} error on layer {1}/{2}'.format(te,i,p['name']))
-					continue
-				except Exception as e:
-					print ('{0} error on layer {1}/{2}'.format(e,d['id'],d['name']))
-					raise				
+				p,ph = self._readDetailPermission(i)
+				detail[str(i)].update(p)
+				if ph: herror[str(i)] += ph
 
 		return detail,herror
+	
+	def _readDetailData(self,i):
+		he = None
+		try:
+			d = self.readDetailFields(i)
+		except HTTPError as he:
+			LM.chk_error('HTTP Error on selectedFields data '+he,LM._LogExtra('LArsf','dhe',id=i))
+			return
+		try:
+			dx = {'name':('name',),'type':('type',),'group':('group','id'),'kind':('kind',),'cat':('categories',0,'slug'),'crs':('data','crs'),\
+				  'lic-ttl':('license','title'),'lic-typ':('license','type'),'lic-ver':('license','version'),\
+				  'data-pky':('data','primary_key_fields'),'data-geo':('data','geometry_field'),'data-fld':('data','fields'),\
+				  'date-pub':('published_at',),'date-fst':('first_published_at',),'date-crt':('created_at',),'date-col':('collected_at',)
+				  }
+			dd = {k:self._set(d,dx[k]) for k in dx}
+			#special postprocess
+			dd['data-pky'] = self._set(','.join(dd['data-pky']))  
+			dd['data-fld'] = self._set(','.join([f['name'] for f in dd['data-fld']]))   
+
+		except IndexError as ie:
+			#not raising this as an error since it only occurs on 'test' layers
+			msg = '{0}. Index error getting {1},{2}'.format(ie,d['id'],d['name'])
+			LM.chk_error(msg,LM._LogExtra('LArsf','die',id=i))
+		except TypeError as te:
+			msg = '{0}. Type error on layer {1}/{2}'.format(te,d['id'],d['name'])
+			LM.chk_error(msg,LM._LogExtra('LArsf','dte',id=i))
+			return
+		except Exception as e:
+			msg = '{0}. Error on layer {1}/{2}'.format(e,d['id'],d['name'])
+			LM.chk_error(msg,LM._LogExtra('LArsf','de',id=i))
+			raise
+		
+		return dd,he
+		
+	def _readDetailPermission(self,i):
+		he = None
+		try:
+			#returns the permissions for group.everyone only
+			p = self.readPermissionFields(i)
+		except HTTPError as he:
+			LM.chk_error('HTTP Error on selectedFields perm '+he,LM._LogExtra('LArsf','phe',id=i))
+			return
+		
+		try:
+			px = {'prm-grp':('id',),'prm-typ':('permission',),'prm-name':('group','name')}
+			pp = {k:self._set(p,px[k]) for k in px} if p else {p:None for p in px}
+
+		except IndexError as ie:
+			#not raising this as an error since it only occurs on 'test' layers
+			msg = '{0} error getting {1},{2}'.format(ie,i,p['name'])
+			LM.chk_error(msg,LM._LogExtra('LArsf','pie',id=i))
+		except TypeError as te:
+			msg = '{0} error on layer {1}/{2}'.format(te,i,p['name'])
+			LM.chk_error(msg,LM._LogExtra('LArsf','pte',id=i))
+			return
+		except Exception as e:
+			msg = '{0} error on layer {1}/{2}'.format(e,p['id'],p['name'])
+			LM.chk_error(msg,LM._LogExtra('LArsf','pe',id=i))
+			raise
+		
+		return pp,he
 	
 	def readPrimaryKeyFields(self):
 		'''Read PrimaryKey field from detail pages'''
@@ -838,6 +904,7 @@ class Authentication(object):
 		spath = (sp,'',os.path.expanduser('~'),os.path.dirname(__file__))
 		verified = [os.path.join(p,sf) for p in spath if os.path.lexists(os.path.join(p,sf))]
 		if not verified:
+			LM.chk_error('Cannot find file '+sf,LM._LogExtra('LAAs','sf'))
 			raise AuthenticationException('Cannot find requested file {}'.format(sf))
 		with open(verified[0],'r') as h:
 			for line in h.readlines():
