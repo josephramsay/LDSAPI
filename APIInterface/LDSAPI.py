@@ -7,17 +7,16 @@ Created on 23/12/2013
 #https://koordinates.com/services/api/v1/sources/1/
 
 import shlex
-from abc import ABCMeta, abstractmethod
+from abc import ABC, abstractmethod #, ABCMeta
 import json
 import re
 import os
-import sys
 import datetime as DT
 import time
 import base64
 
-from http.client import HTTPMessage
-
+#from http.client import HTTPMessage
+from six.moves.http_client import HTTPMessage
 from six.moves import http_cookiejar as cjar
 from six.moves.urllib import request
 #from six.moves.urllib import parse as ul1
@@ -26,7 +25,6 @@ from six.moves.urllib.error import URLError
 from six.moves.urllib.error import HTTPError
 from six.moves.urllib.request import Request
 from six import string_types
-from numpy.core import info
 	
 try:
 	from LDSUtilityScripts.LinzUtil import LogManager, LDS
@@ -48,11 +46,11 @@ MAX_RETRY_ATTEMPTS = 3
 
 KEYINDEX = 0
 LM = LogManager()
-LM.register('chk',default=True)
+#LM.register()
 
-class LDSAPI(object):
-
-	__metaclass__ = ABCMeta
+class LDSAPI(ABC):
+#class LDSAPI(object):
+#	__metaclass__ = ABCMeta
 
 	sch = None
 	sch_def = 'https'
@@ -119,7 +117,7 @@ class LDSAPI(object):
 		elif auth == 'key':
 			self._setKeyAuth(creds, cfile)
 		else:
-			LM.chk_err('Auth error. Need key/basic specifier',LM._LogExtra('LDSAPI','sA'))
+			LM.err('Auth error. Need key/basic specifier',LM._LogExtra('LDSAPI','sA'))
 			raise Exception('Incorrect auth configuration supplied')
 		
 	def _setBasicAuth(self,creds,cfile):
@@ -343,41 +341,41 @@ class LDSAPI(object):
 				last_exc = he
 				if re.search('429',str(he)):
 					msg = 'RateLimit Error {0}. Sleeping for {1} seconds awaiting 429 expiry. Attempt {2}'.format(he,SLEEP_TIME,MAX_RETRY_ATTEMPTS-retry)
-					LM.chk_error(msg,LM._LogExtra('LAc','hrl',url=req_str))
+					LM.error(msg,LM._LogExtra('LAc','hrl',url=req_str))
 					time.sleep(SLEEP_TIME)
 					retry -= 1
 					continue
 				elif retry and re.search('401|403|500',str(he)):
 					msg = 'HTTP Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
-					LM.chk_error(msg,LM._LogExtra('LAc','hcx',url=req_str))
+					LM.error(msg,LM._LogExtra('LAc','hcx',url=req_str))
 					retry -= 1
 					continue
 				elif retry and re.search('502',str(he)):
 					msg = 'Proxy Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
-					LM.chk_error(msg,LM._LogExtra('LAc','hpe',url=req_str))
+					LM.error(msg,LM._LogExtra('LAc','hpe',url=req_str))
 					retry -= 1
 					continue
 				elif retry and re.search('410',str(he)):
 					msg = 'Layer removed {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
-					LM.chk_error(msg,LM._LogExtra('LAc','hlr',url=req_str))
+					LM.error(msg,LM._LogExtra('LAc','hlr',url=req_str))
 					retry -= 1
 					continue
 				elif retry:
 					msg = 'Error with request {0} returns {1}'.format(req_str,he)
-					LM.chk_error(msg,LM._LogExtra('LAc','hx',url=req_str))
+					LM.error(msg,LM._LogExtra('LAc','hx',url=req_str))
 					retry -= 1
 					continue
 				else:
 					#Retries have been exhausted, raise the active httpexception
 					raise HTTPError(he.msg+msg)
 			except URLError as ue:
-				LM.chk_error('URL error on connect '+ue,LM._LogExtra('LAc','ue',url=req_str))
+				LM.error('URL error on connect '+ue,LM._LogExtra('LAc','ue',url=req_str))
 				raise ue
 			except ValueError as ve:
-				LM.chk_error('Value error on connect '+ue,LM._LogExtra('LAc','ve',url=req_str))
+				LM.error('Value error on connect '+ue,LM._LogExtra('LAc','ve',url=req_str))
 				raise ve
 			except Exception as xe:
-				LM.chk_error('Othr error on connect'+str(xe),LM._LogExtra('LAc','xe',url=req_str))
+				LM.error('Othr error on connect'+str(xe),LM._LogExtra('LAc','xe',url=req_str))
 				raise xe
 		else:
 			raise last_exc
@@ -413,7 +411,7 @@ class LDSAPI(object):
 				#api.dispReq(api.req)
 				#api.dispRes(api.res)
 			except HTTPError as he:
-				LM.chk_error('HTTP Error on page fetch '+he,LM._LogExtra('LAfp','he',url=pstr))
+				LM.error('HTTP Error on page fetch '+he,LM._LogExtra('LAfp','he',url=pstr))
 				morepages = False
 				raise
 				#continue
@@ -515,13 +513,19 @@ class DataAPI(LDSAPI):
 						{'dgt_data'		 :'/services/api/v1/data/',
 						 'dgt_layers'	   :'/services/api/v1/layers/',
 						 'dgt_tables'	   :'/services/api/v1/tables/',
+						 'dgt_groups'	   :'/services/api/v1/groups',
+						 'dgt_users'	   :'/services/api/v1/users',
 						 'dpt_layers'	   :'/services/api/v1/layers/',
 						 'dpt_tables'	   :'/services/api/v1/tables/',
+						 'dpt_groups'	   :'/services/api/v1/groups',
+						 'dpt_users'	   :'/services/api/v1/users',
 						 'dgt_draftlayers'  :'/services/api/v1/layers/drafts/',
 						 'dgt_drafttables'  :'/services/api/v1/tables/drafts/'},
 				  'detail':
 						{'dgt_layers'	   :'/services/api/v1/layers/{id}/',
 						 'dgt_tables'	   :'/services/api/v1/tables/{id}/',
+						 'dgt_groups'	   :'/services/api/v1/groups/{id}/',
+						 'dgt_users'	   :'/services/api/v1/users/{id}/',
 						 'ddl_delete'	   :'/services/api/v1/layers/{id}/'},
 				  'access':
 						{'dgt_permissions'  :'/services/api/v1/layers/{id}/permissions/'},
@@ -652,14 +656,23 @@ class APIAccess(object):
 		self.api.setAuthentication(creds, cfile, self.aref)
 
 
-	def readAllPages(self):
+	def readLayerPages(self):
 		'''Calls API custom page reader'''
-		self.api.setParams(sec='list',pth=self.path,host=self.uref)
+		self.api.setParams(sec='list',pth=self.lpath,host=self.uref)
 		return self.api.fetchPages()
 		
-	def readAllIDs(self):
-		'''Extracts and returns IDs from reading all-pages'''
-		return [p['id'] for p in self.readAllPages() if 'id' in p]	
+	def readAllLayerIDs(self):
+		'''Extracts and returns IDs from reading layer-pages'''
+		return [p['id'] for p in self.readLayerPages() if 'id' in p]		
+	
+	def readGroupPages(self):
+		'''Calls API custom page reader'''
+		self.api.setParams(sec='list',pth=self.gpath,host=self.uref)
+		return self.api.fetchPages()
+		
+	def readAllGroupIDs(self):
+		'''Extracts and returns IDs from reading group-pages'''
+		return [p['id'] for p in self.readGroupPages() if 'id' in p]	
 	
 	
 class SourceAccess(APIAccess):
@@ -733,10 +746,15 @@ class StaticFetch():
 class DataAccess(APIAccess):
 	'''Convenience class for accessing commonly needed data-api data'''
 	
+	PAGES = ('data','permission','group')
+	LAYER_PAGES = ('data','permission')
+	GROUP_PAGES = ('group',)
+	
 	def __init__(self, creds, cfile, uref=LDSAPI.url_def, pref=LDSAPI.pxy_def, aref=LDSAPI.ath_def):
 		super(DataAccess, self).__init__(DataAPI, creds, cfile, (uref, pref, aref))
 		self.path = 'dgt_layers'
-		self.dpath = 'dgt_layers'
+		self.lpath = 'dgt_layers'
+		self.gpath = 'dgt_groups'
 		self.ppath = 'dgt_permissions'
 		
 	def _set(self,l,nl=None):
@@ -754,103 +772,132 @@ class DataAccess(APIAccess):
 		#if n2: return l[n1][n2].encode('utf8') if n1 in l and n2 in l[n1] else None
 		#else: return l[n1].encode('utf8') if n1 in l else None
 	
-	def readDetailFields(self,i):
-		'''All field from detail pages'''
-		self.api.setParams(sec='detail',pth=self.dpath,host='lds-l',id=i)
+	def readLayerFields(self,i):
+		'''All field from detail layer pages'''
+		self.api.setParams(sec='detail',pth=self.lpath,host='lds-l',id=i)
 		return self.api.fetchPages()[0]
 	
-	def readPermissionFields(self,i):
-		'''All field from permission pages'''
+	def readGroupFields(self,i):
+		'''All field from detail group pages'''
+		self.api.setParams(sec='detail',pth=self.gpath,host='lds-l',id=i)
+		return self.api.fetchPages()[0]
+	
+	def readPermissionFields(self,i,gfilter=True):
+		'''All field from permission pages, filter by group.everyone i.e. accessible'''
 		self.api.setParams(sec='access',pth=self.ppath,host='lds-l',id=i)
-		pge = [p for p in self.api.fetchPages() if p['id']=='group.everyone']
+		pge = [p for p in self.api.fetchPages() if not gfilter or p['id']=='group.everyone']
 		return pge[0] if pge else None
 		
-	def readSelectedFields(self,pagereq=('data','permission')):
-		'''Not all fields, just the ones we're interested in'''
+	
+	def readLayers(self): return self._readFields(idfunc=self.readAllLayerIDs,pagereq=self.LAYER_PAGES)
+	#def readLayers(self): return self._readFields(idfunc=self._testLayerList,pagereq=self.LAYER_PAGES)
+	#def _testLayerList(self): return [52109,51779]
+	def readGroups(self): return self._readFields(idfunc=self.readAllGroupIDs,pagereq=self.GROUP_PAGES)
+	#def readGroups(self): return self._readFields(idfunc=self._testGroupList,pagereq=self.GROUP_PAGES)
+	#def _testGroupList(self): return [2006,2115]
+									
+	def _readFields(self,idfunc,pagereq):
+		'''Read the fields from selected (predefined) pages'''
+		detail,herror = {},{}
+		for i in idfunc():
+			#print ('WARNING. READING LDS-API-ID SUBSET',i)
+			detail[str(i)],herror[str(i)] = self._readDetail(i,pagereq)
+		return detail,herror
+
+	def _readDetail(self,i,pr):
+		'''INPROGRESS Attempt to consolidate the readX functions'''
+		dd,he = {},None
+		fun_det = {
+				'data':(self.readLayerFields,
+						{'id':('id',),'title':('title',),'type':('type',),'group':('group','id'),'kind':('kind',),'cat':('categories',0,'slug'),'crs':('data','crs'),\
+						'grp-id':('group','id'),'grp-nm':('group','name'),\
+						'lic-id':('license','id'),'lic-ttl':('license','title'),'lic-typ':('license','type'),'lic-ver':('license','version'),\
+						'data-crs':('data','crs'),'data-pky':('data','primary_key_fields'),'data-geo':('data','geometry_field'),'data-fld':('data','fields'),\
+						'date-pub':('published_at',),'date-fst':('first_published_at',),'date-crt':('created_at',),'date-col':('collected_at',)
+				  }),
+				'permission':(self.readPermissionFields,
+						{'prm-id':('id',),'prm-typ':('permission',),'prm-gid':('group','id',),'prm-gnm':('group','name')}),
+				'group':(self.readGroupFields,
+						{'grp-id':('id',),'grp-name':('name',),'grp-lyrs':('stats','layers',),'grp-tbls':('stats','tables'),'grp-docs':('stats','documents')})
+				}
+		for fd in set(fun_det.keys()).intersection(pr):
+			#fetch the requested pages
+			try:
+				d = fun_det[fd][0](i)
+			except HTTPError as he:
+				LM.error('HTTP Error on selectedFields data '+he,LM._LogExtra('LArsf','dhe',id=i))
+				return
+			#put the results into a dict
+			try:
+				dd.update( {k:self._set(d,fun_det[fd][1][k]) for k in fun_det[fd][1]} if d else {d:None for d in fun_det[fd][1]} )
+				#special postprocess
+				if fd == 'data':
+					dd['data-pky'] = self._set(','.join(dd['data-pky']))  
+					dd['data-fld'] = self._set(','.join([f['name'] for f in dd['data-fld']]))
+			except IndexError as ie:
+				#not raising this as an error since it only occurs on 'test' layers
+				msg = '{0}. Index error getting {1},{2}'.format(ie,d['id'],d['name'])
+				LM.error(msg,LM._LogExtra('LArsf','die',id=i))
+			except TypeError as te:
+				msg = '{0}. Type error on layer {1}/{2}'.format(te,d['id'],d['name'])
+				LM.error(msg,LM._LogExtra('LArsf','dte',id=i))
+				return
+			except Exception as e:
+				msg = '{0}. Error on layer {1}/{2}'.format(e,d['id'],d['name'])
+				LM.error(msg,LM._LogExtra('LArsf','de',id=i))
+				raise
+			
+		return dd,he
+
+	
+# 	def _readDetailGroup(self,i):
+# 		he = None
+# 		try:
+# 			#returns the permissions for group.everyone only
+# 			g = self.readGroupFields(i)
+# 		except HTTPError as he:
+# 			LM.error('HTTP Error on selectedFields group '+he,LM._LogExtra('LArsf','phe',id=i))
+# 			return
+# 		
+# 		try:
+# 			gx = {'grp-name':('name',),'grp-lyrs':('stats','layers',),'grp-tbls':('group','tables'),'grp-docs':('group','documents')}
+# 			gg = {k:self._set(g,gx[k]) for k in gx} if g else {g:None for g in gx}
+# 
+# 		except IndexError as ie:
+# 			#not raising this as an error since it only occurs on 'test' layers
+# 			msg = '{0} error getting {1},{2}'.format(ie,i,g['name'])
+# 			LM.error(msg,LM._LogExtra('LArsf','gie',id=i))
+# 		except TypeError as te:
+# 			msg = '{0} error on layer {1}/{2}'.format(te,i,g['name'])
+# 			LM.error(msg,LM._LogExtra('LArsf','gte',id=i))
+# 			return
+# 		except Exception as e:
+# 			msg = '{0} error on layer {1}/{2}'.format(e,g['id'],g['name'])
+# 			LM.error(msg,LM._LogExtra('LArsf','ge',id=i))
+# 			raise
+# 		
+# 		return gg,he
+	
+	def _readSummaryPages2(self,pagereq=('data','group')):
+		'''IN_PROGRESS Sometimes we don't need to get the detail pages. Just extract the summary'''
 		detail = {}
 		herror = {}
-		
-		for i in self.readAllIDs():
-		#print ('WARNING. READING LDS-API-ID SUBSET')
-		#for i in [52109,51779]:#1572,1993,2052,1293,2100]:#[1993,1996,1624,2268,626,407]:
-			detail[str(i)] = {}
-			herror[str(i)] = ()
-			if 'data' in pagereq:
-				d,dh = self._readDetailData(i)
-				detail[str(i)].update(d)
-				if dh: herror[str(i)] += dh
+
+		if 'data' in pagereq:
+			d,dh = self._readSummaryData()
+			detail.update(d)
+			if dh: herror += dh
 			
-			if 'permission' in pagereq:
-				p,ph = self._readDetailPermission(i)
-				detail[str(i)].update(p)
-				if ph: herror[str(i)] += ph
-
+		if 'group' in pagereq:
+			d,dh = self._readSummaryGroup()
+			detail.update(d)
+			if dh: herror += dh
+			
 		return detail,herror
-	
-	def _readDetailData(self,i):
-		he = None
-		try:
-			d = self.readDetailFields(i)
-		except HTTPError as he:
-			LM.chk_error('HTTP Error on selectedFields data '+he,LM._LogExtra('LArsf','dhe',id=i))
-			return
-		try:
-			dx = {'name':('name',),'type':('type',),'group':('group','id'),'kind':('kind',),'cat':('categories',0,'slug'),'crs':('data','crs'),\
-				  'lic-ttl':('license','title'),'lic-typ':('license','type'),'lic-ver':('license','version'),\
-				  'data-pky':('data','primary_key_fields'),'data-geo':('data','geometry_field'),'data-fld':('data','fields'),\
-				  'date-pub':('published_at',),'date-fst':('first_published_at',),'date-crt':('created_at',),'date-col':('collected_at',)
-				  }
-			dd = {k:self._set(d,dx[k]) for k in dx}
-			#special postprocess
-			dd['data-pky'] = self._set(','.join(dd['data-pky']))  
-			dd['data-fld'] = self._set(','.join([f['name'] for f in dd['data-fld']]))   
-
-		except IndexError as ie:
-			#not raising this as an error since it only occurs on 'test' layers
-			msg = '{0}. Index error getting {1},{2}'.format(ie,d['id'],d['name'])
-			LM.chk_error(msg,LM._LogExtra('LArsf','die',id=i))
-		except TypeError as te:
-			msg = '{0}. Type error on layer {1}/{2}'.format(te,d['id'],d['name'])
-			LM.chk_error(msg,LM._LogExtra('LArsf','dte',id=i))
-			return
-		except Exception as e:
-			msg = '{0}. Error on layer {1}/{2}'.format(e,d['id'],d['name'])
-			LM.chk_error(msg,LM._LogExtra('LArsf','de',id=i))
-			raise
 		
-		return dd,he
-		
-	def _readDetailPermission(self,i):
-		he = None
-		try:
-			#returns the permissions for group.everyone only
-			p = self.readPermissionFields(i)
-		except HTTPError as he:
-			LM.chk_error('HTTP Error on selectedFields perm '+he,LM._LogExtra('LArsf','phe',id=i))
-			return
-		
-		try:
-			px = {'prm-grp':('id',),'prm-typ':('permission',),'prm-name':('group','name')}
-			pp = {k:self._set(p,px[k]) for k in px} if p else {p:None for p in px}
-
-		except IndexError as ie:
-			#not raising this as an error since it only occurs on 'test' layers
-			msg = '{0} error getting {1},{2}'.format(ie,i,p['name'])
-			LM.chk_error(msg,LM._LogExtra('LArsf','pie',id=i))
-		except TypeError as te:
-			msg = '{0} error on layer {1}/{2}'.format(te,i,p['name'])
-			LM.chk_error(msg,LM._LogExtra('LArsf','pte',id=i))
-			return
-		except Exception as e:
-			msg = '{0} error on layer {1}/{2}'.format(e,p['id'],p['name'])
-			LM.chk_error(msg,LM._LogExtra('LArsf','pe',id=i))
-			raise
-		
-		return pp,he
-	
 	def readPrimaryKeyFields(self):
 		'''Read PrimaryKey field from detail pages'''
-		d,_ = self.readSelectedFields(pagereq=('data',))
+		d,_ = self.readLayers(pagereq=('data',))
 		res = [i for i in d]
 		print (res)
 
@@ -904,7 +951,7 @@ class Authentication(object):
 		spath = (sp,'',os.path.expanduser('~'),os.path.dirname(__file__))
 		verified = [os.path.join(p,sf) for p in spath if os.path.lexists(os.path.join(p,sf))]
 		if not verified:
-			LM.chk_error('Cannot find file '+sf,LM._LogExtra('LAAs','sf'))
+			LM.error('Cannot find file '+sf,LM._LogExtra('LAAs','sf'))
 			raise AuthenticationException('Cannot find requested file {}'.format(sf))
 		with open(verified[0],'r') as h:
 			for line in h.readlines():
@@ -953,15 +1000,15 @@ class APIFunctionTest(object):
 	
 	def _testSA(self):
 		sa = SourceAccess(creds,self.credsfile)
-		#print sa.readAllIDs()
-		res = sa.readAllPages()
+		#print sa.readAllLayerIDs()
+		res = sa.readLayerPages()
 		lsaids = [(r['id'],r['last_scanned_at']) for r in res if r['last_scanned_at']]
 		for lid,dt in lsaids:
 			print ('layer {} last scanned at {}'.format(lid,dt))	
 			
 	def _testDA(self):
 		da = DataAccess(creds,self.credsfile)
-		#print sa.readAllIDs()
+		#print sa.readAllLayerIDs()
 		res = da.readPrimaryKeyFields()
 		
 	def _testSF(self):
