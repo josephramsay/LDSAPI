@@ -46,7 +46,7 @@ MAX_RETRY_ATTEMPTS = 3
 
 KEYINDEX = 0
 LM = LogManager()
-#LM.register()
+LM.register()
 
 class LDSAPI(ABC):
 #class LDSAPI(object):
@@ -375,7 +375,7 @@ class LDSAPI(ABC):
 				LM.error('Value error on connect '+ue,LM._LogExtra('LAc','ve',url=req_str))
 				raise ve
 			except Exception as xe:
-				LM.error('Othr error on connect'+str(xe),LM._LogExtra('LAc','xe',url=req_str))
+				LM.error('Other error on connect'+str(xe),LM._LogExtra('LAc','xe',url=req_str))
 				raise xe
 		else:
 			raise last_exc
@@ -825,7 +825,7 @@ class DataAccess(APIAccess):
 			try:
 				d = fun_det[fd][0](i)
 			except HTTPError as he:
-				LM.error('HTTP Error on selectedFields data '+he,LM._LogExtra('LArsf','dhe',id=i))
+				LM.error('HTTP Error on selectedFields data '+he,LM._LogExtra('LArsf','dhe',xid=i))
 				return
 			#put the results into a dict
 			try:
@@ -837,14 +837,14 @@ class DataAccess(APIAccess):
 			except IndexError as ie:
 				#not raising this as an error since it only occurs on 'test' layers
 				msg = '{0}. Index error getting {1},{2}'.format(ie,d['id'],d['name'])
-				LM.error(msg,LM._LogExtra('LArsf','die',id=i))
+				LM.error(msg,LM._LogExtra('LArsf','die',xid=i))
 			except TypeError as te:
 				msg = '{0}. Type error on layer {1}/{2}'.format(te,d['id'],d['name'])
-				LM.error(msg,LM._LogExtra('LArsf','dte',id=i))
+				LM.error(msg,LM._LogExtra('LArsf','dte',xid=i))
 				return
 			except Exception as e:
 				msg = '{0}. Error on layer {1}/{2}'.format(e,d['id'],d['name'])
-				LM.error(msg,LM._LogExtra('LArsf','de',id=i))
+				LM.error(msg,LM._LogExtra('LArsf','de',xid=i))
 				raise
 			
 		return dd,he
@@ -856,7 +856,7 @@ class DataAccess(APIAccess):
 # 			#returns the permissions for group.everyone only
 # 			g = self.readGroupFields(i)
 # 		except HTTPError as he:
-# 			LM.error('HTTP Error on selectedFields group '+he,LM._LogExtra('LArsf','phe',id=i))
+# 			LM.error('HTTP Error on selectedFields group '+he,LM._LogExtra('LArsf','phe',xid=i))
 # 			return
 # 		
 # 		try:
@@ -866,14 +866,14 @@ class DataAccess(APIAccess):
 # 		except IndexError as ie:
 # 			#not raising this as an error since it only occurs on 'test' layers
 # 			msg = '{0} error getting {1},{2}'.format(ie,i,g['name'])
-# 			LM.error(msg,LM._LogExtra('LArsf','gie',id=i))
+# 			LM.error(msg,LM._LogExtra('LArsf','gie',xid=i))
 # 		except TypeError as te:
 # 			msg = '{0} error on layer {1}/{2}'.format(te,i,g['name'])
-# 			LM.error(msg,LM._LogExtra('LArsf','gte',id=i))
+# 			LM.error(msg,LM._LogExtra('LArsf','gte',xid=i))
 # 			return
 # 		except Exception as e:
 # 			msg = '{0} error on layer {1}/{2}'.format(e,g['id'],g['name'])
-# 			LM.error(msg,LM._LogExtra('LArsf','ge',id=i))
+# 			LM.error(msg,LM._LogExtra('LArsf','ge',xid=i))
 # 			raise
 # 		
 # 		return gg,he
@@ -897,9 +897,8 @@ class DataAccess(APIAccess):
 		
 	def readPrimaryKeyFields(self):
 		'''Read PrimaryKey field from detail pages'''
-		d,_ = self.readLayers(pagereq=('data',))
-		res = [i for i in d]
-		print (res)
+		res,_ = self.readLayers(pagereq=('data',))
+		return res
 
 '''Copied from LDSChecker for availability'''
 		
@@ -1010,6 +1009,7 @@ class APIFunctionTest(object):
 		da = DataAccess(creds,self.credsfile)
 		#print sa.readAllLayerIDs()
 		res = da.readPrimaryKeyFields()
+		print(res)
 		
 	def _testSF(self):
 		#,plus='',head=None,data={}
