@@ -9,6 +9,7 @@ This module is a hack wrapping LXML because Py2.6 doesn't support namespaces dec
 
 import re
 import sys
+import http
 
 from lxml import etree
 from six.moves.urllib.error import HTTPError
@@ -17,6 +18,7 @@ from six.moves.urllib.request import urlopen
 PYVER3 = sys.version_info > (3,)
 
 class LXMLWrapperException(Exception): pass
+class LXMLSyntaxException(Exception): pass
 
 class LXMLetree(object):
 	def __init__(self):
@@ -56,6 +58,10 @@ class LXMLtree(object):
 		'''parses a string to root node'''
 		return etree.fromstring(text)
 	
+	def tostring(self):
+		'''string rep of tree'''
+		return etree.tostring(self._tree)
+	
 	def xpath(self,text,namespaces=None):
 		return etree.XPath(text,namespaces) if namespaces and False else etree.XPath(text)
 	
@@ -67,12 +73,17 @@ class LXMLtree(object):
 			else: etp = self._parse_p(content,p)				#parse normally or using provided parser
 		except HTTPError as he:
 			raise #but this won't happen because LXML pushes HTTP errors up to IO errors
-		except IOError as ioe:
+		except (IOError,http.client.IncompleteRead) as ioe:
 			#if re.search('failed to load HTTP resource', ioe.message): #No longer works on Py3
 			ioem = str(ioe) if PYVER3 else ioe.message
 			if re.search('failed to load HTTP resource', ioem):
-				raise HTTPError(content, 429, 'IOE. Possible HTTP429 Rate Limiting Error. '+ioem, None, None)
+				raise HTTPError(content, 429, 'IOE. Possible 429 Rate Limiting Error. '+ioem, None, None)
+			if re.search('IncompleteRead', ioem):
+				raise HTTPError(content, 418, 'IOE. Cannot read. '+ioem, None, None)
 			raise HTTPError(content, 404, 'IOE. Probable HTTP Error. '+ioem, None, None)
+		except etree.XMLSyntaxError as xse:
+			if re.search('Document is empty', str(xse)):
+				raise LXMLSyntaxException('Response from server is empty') from xse
 		except Exception as e:
 			raise
 		return etp

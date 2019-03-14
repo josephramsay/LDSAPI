@@ -14,6 +14,7 @@ import os
 import datetime as DT
 import time
 import base64
+import http
 
 #from http.client import HTTPMessage
 from six.moves.http_client import HTTPMessage
@@ -25,6 +26,7 @@ from six.moves.urllib.error import URLError
 from six.moves.urllib.error import HTTPError
 from six.moves.urllib.request import Request
 from six import string_types
+from abc import abstractstaticmethod
 	
 try:
 	from LDSUtilityScripts.LinzUtil import LogManager, LDS
@@ -41,8 +43,8 @@ except ImportError:
 
 REDIRECT = False
 SLEEP_TIME = 5*60
-SLEEP_RETRY = 5
-MAX_RETRY_ATTEMPTS = 3
+SLEEP_RETRY_INCR = 5
+MAX_RETRY_ATTEMPTS = 10
 
 KEYINDEX = 0
 LM = LogManager()
@@ -52,6 +54,7 @@ class LDSAPI(ABC):
 #class LDSAPI(object):
 #	__metaclass__ = ABCMeta
 
+	__sec = 'LDSAPI Wrapper'
 	sch = None
 	sch_def = 'https'
 	
@@ -91,16 +94,16 @@ class LDSAPI(ABC):
 		'''abstract host/path setting method'''
 		pass
 		
-	def setCommonParams(self,scheme=None,host=None,format='json',sec=None,pth=None,url=None):
+	def setCommonParams(self,scheme=None,host=None,fmt='json',sec=None,pth=None,url=None):
 		'''Assigns path/host params or tries to extract them from a url'''
-		self.format = format
+		self.fmt = fmt
 		if url:
 			p = urlparse(url)
 			self.scheme = p.scheme
 			self.host = p.netloc
 			self.path = p.path
 			return
-		if pth: self.path = self.path_ref[sec][pth]+'?format={0}'.format(self.format)
+		if pth: self.path = self.path_ref[sec][pth]+'?format={0}'.format(self.fmt)
 		if host: self.host = super(DataAPI, self).url[host]
 		self.scheme = scheme or self.sch_def
 
@@ -321,6 +324,7 @@ class LDSAPI(ABC):
 		'''URL connection wrappercatching common exceptions and retrying where necessary
 		param: connreq can be either a url string or a request object
 		'''
+		sr = self.__sec,'Connection Manager'
 		self.setRequest(req)
 		req_str = self.getRequestStr()
 
@@ -341,41 +345,58 @@ class LDSAPI(ABC):
 				last_exc = he
 				if re.search('429',str(he)):
 					msg = 'RateLimit Error {0}. Sleeping for {1} seconds awaiting 429 expiry. Attempt {2}'.format(he,SLEEP_TIME,MAX_RETRY_ATTEMPTS-retry)
-					LM.error(msg,LM._LogExtra('LAc','hrl',url=req_str))
+					LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
 					time.sleep(SLEEP_TIME)
 					retry -= 1
 					continue
-				elif retry and re.search('401|403|500',str(he)):
-					msg = 'HTTP Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
-					LM.error(msg,LM._LogExtra('LAc','hcx',url=req_str))
-					retry -= 1
-					continue
-				elif retry and re.search('502',str(he)):
-					msg = 'Proxy Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
-					LM.error(msg,LM._LogExtra('LAc','hpe',url=req_str))
-					retry -= 1
-					continue
-				elif retry and re.search('410',str(he)):
-					msg = 'Layer removed {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
-					LM.error(msg,LM._LogExtra('LAc','hlr',url=req_str))
-					retry -= 1
-					continue
 				elif retry:
-					msg = 'Error with request {0} returns {1}'.format(req_str,he)
-					LM.error(msg,LM._LogExtra('LAc','hx',url=req_str))
-					retry -= 1
-					continue
+					if re.search('401|500',str(he)):
+						msg = 'HTTP Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
+						LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
+						retry -= 1
+						continue
+					elif re.search('403',str(he)):
+						msg = 'HTTP Error {0} Returns {1}. Attempt {2} (consider proxy)'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
+						LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
+						retry -= 1
+						continue
+					elif re.search('502',str(he)):
+						msg = 'Proxy Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
+						LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
+						retry -= 1
+						continue
+					elif re.search('410',str(he)):
+						msg = 'Layer removed {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
+						LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
+						retry = 0
+						continue
+					else:
+						msg = 'Error with request {0} returns {1}'.format(req_str,he)
+						LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
+						retry -= 1
+						continue
 				else:
 					#Retries have been exhausted, raise the active httpexception
 					raise HTTPError(he.msg+msg)
+			except http.client.RemoteDisconnected as rd:
+				LM.warn('Remote Disconnect on connect {}'.format(rd),
+					LM._LogExtra(*sr,exc=rd,rty=retry))
+				LDSAPI.sleepIncr(retry)
+				retry -= 1
+				continue
 			except URLError as ue:
-				LM.error('URL error on connect '+ue,LM._LogExtra('LAc','ue',url=req_str))
+				LM.warn('URL error on connect {}'.format(ue),
+					LM._LogExtra(*sr,exc=ue,rty=retry))
+				if re.search('Connection refused',str(ue)):
+					LDSAPI.sleepIncr(retry)
+					retry -= 1
+					continue
 				raise ue
 			except ValueError as ve:
-				LM.error('Value error on connect '+ue,LM._LogExtra('LAc','ve',url=req_str))
+				LM.error('Value error on connect {}'.format(ve),LM._LogExtra(*sr,exc=ve,url=req_str,rty=retry))
 				raise ve
 			except Exception as xe:
-				LM.error('Other error on connect'+str(xe),LM._LogExtra('LAc','xe',url=req_str))
+				LM.error('Other error on connect {}'.format(xe),LM._LogExtra(*sr,exc=xe,url=req_str,rty=retry))
 				raise xe
 		else:
 			raise last_exc
@@ -396,7 +417,7 @@ class LDSAPI(ABC):
 		return base64.b64encode(astr).decode()
 		
 	def fetchPages(self,psub=''):
-		
+		sr = self.__sec,'Page fetch'
 		upd = []
 		page = 0
 		pagel = None
@@ -411,7 +432,7 @@ class LDSAPI(ABC):
 				#api.dispReq(api.req)
 				#api.dispRes(api.res)
 			except HTTPError as he:
-				LM.error('HTTP Error on page fetch '+he,LM._LogExtra('LAfp','he',url=pstr))
+				LM.error('HTTP Error on page fetch '+he,LM._LogExtra(*sr,exc=he,url=pstr))
 				morepages = False
 				raise
 				#continue
@@ -430,6 +451,12 @@ class LDSAPI(ABC):
 					
 		return upd
 	
+	@staticmethod
+	def sleepIncr(r):
+		t = (MAX_RETRY_ATTEMPTS-r)*SLEEP_RETRY_INCR
+		print('tock' if t%2 else 'tick',t)
+		time.sleep(t)
+		
 	@staticmethod
 	def dispReq(req):
 		print ('Request\n-------\n')
@@ -742,6 +769,13 @@ class StaticFetch():
 		}
 		da = DataAccess(kd[kk0][0],korb[kk0],uref=uref,pref=pref,aref=kd[kk0][1])
 		return da.api.conn(uref)
+	
+	#unnecessary since only classmethods
+	def __enter__(self):
+		return self
+	
+	def __exit__(self, type, value, traceback):
+		pass
 		
 class DataAccess(APIAccess):
 	'''Convenience class for accessing commonly needed data-api data'''
