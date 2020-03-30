@@ -352,7 +352,7 @@ class LDSAPI(ABC):
 					if handle.geturl()!=req_str:
 						msg = 'Redirect Warning'
 						#cannot easily mask redirected url so logging original
-						LM.warning(msg,LM._LogExtra(*sr,exc=None,url=req_str,rty=0))
+						LM.info(msg,LM._LogExtra(*sr,exc=None,url=req_str,rty=0))
 					return handle
 				#self.setResponse(handle)
 				#break
