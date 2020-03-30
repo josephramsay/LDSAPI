@@ -350,9 +350,9 @@ class LDSAPI(ABC):
 				handle = request.urlopen(self.getRequest())#,data)
 				if handle: 
 					if handle.geturl()!=req_str:
-						redir = handle.geturl()
-						msg = 'Redirect Warning to '.format(redir)
-						LM.warning(msg,LM._LogExtra(*sr,exc=he,url=redir,rty=0))
+						msg = 'Redirect Warning'
+						#cannot easily mask redirected url so logging original
+						LM.warning(msg,LM._LogExtra(*sr,exc=None,url=req_str,rty=0))
 					return handle
 				#self.setResponse(handle)
 				#break
