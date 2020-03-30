@@ -14,7 +14,7 @@ import os
 import datetime as DT
 import time
 import base64
-import http
+
 
 #from http.client import HTTPMessage
 from six.moves.http_client import HTTPMessage
@@ -26,12 +26,16 @@ from six.moves.urllib.error import URLError
 from six.moves.urllib.error import HTTPError
 from six.moves.urllib.request import Request
 from six import string_types
-from abc import abstractstaticmethod
 	
 try:
-	from LDSUtilityScripts.LinzUtil import LogManager, LDS
+	from LDSUtilityScripts.LinzUtil import LogManager, Authentication, LDS
 except ImportError:
-	from LinzUtil import LogManager, LDS
+	from LinzUtil import LogManager, Authentication, LDS
+	
+try:
+	from http.client import RemoteDisconnected as HttpResponseError
+except ImportError:
+	from http.client import BadStatusLine as HttpResponseError
 
 
 #from Main import CReader
@@ -45,6 +49,7 @@ REDIRECT = False
 SLEEP_TIME = 5*60
 SLEEP_RETRY_INCR = 5
 MAX_RETRY_ATTEMPTS = 10
+INIT_MAX_RETRY_ATTEMPTS = 100
 
 KEYINDEX = 0
 LM = LogManager()
@@ -187,6 +192,7 @@ class LDSAPI(ABC):
 		self.res = res
 		self._setResponseData(res.read())
 		self._setResponseInfo(res.info())
+		self._setResponseURL(res.geturl())
 		self._setResponseHead(LDSAPI.parseHeaders(self.info._headers) if hasattr(self.info,'_headers') else None)
 		
 	def _setResponseData(self,respdata):
@@ -197,6 +203,9 @@ class LDSAPI(ABC):
 		
 	def _setResponseInfo(self,info):
 		self.info = info
+		
+	def _setResponseURL(self,url):
+		self.url = url
 		
 	def getResponse(self):
 		return {'info':self.respinfo,'head':self.resphead,'data':self.respdata}
@@ -334,36 +343,52 @@ class LDSAPI(ABC):
 			
 		request.install_opener(self.opener(purl=self.openerstrs_ntlm))
 		
-		retry = MAX_RETRY_ATTEMPTS
-		while retry:
+		retry = INIT_MAX_RETRY_ATTEMPTS
+		while retry>0:
+			retry -= 1
 			try:
 				handle = request.urlopen(self.getRequest())#,data)
-				if handle: return handle
+				if handle: 
+					if handle.geturl()!=req_str:
+						redir = handle.geturl()
+						msg = 'Redirect Warning to '.format(redir)
+						LM.warning(msg,LM._LogExtra(*sr,exc=he,url=redir,rty=0))
+					return handle
 				#self.setResponse(handle)
 				#break
 			except HTTPError as he:
 				last_exc = he
 				if re.search('429',str(he)):
-					msg = 'RateLimit Error {0}. Sleeping for {1} seconds awaiting 429 expiry. Attempt {2}'.format(he,SLEEP_TIME,MAX_RETRY_ATTEMPTS-retry)
+					msg = 'RateLimit Error {0}. Sleep awaiting 429 expiry. Attempt {1}'.format(he,MAX_RETRY_ATTEMPTS-retry)
 					LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
-					time.sleep(SLEEP_TIME)
-					retry -= 1
+					LDSAPI.sleepIncr(retry)
 					continue
 				elif retry:
+					# I'm leaving this code here to test with because LDS was  
+					# somehow throwing exceptions as well as redirecting
+					#
+					#if re.search('301',str(he)):
+					#	msg = 'Redirect Error {0}'.format(he)
+					#	#if we have a valid response and its a 301 see if it contains a redirect-to
+					#	if handle and handle.geturl(): 
+					#		retry = 1
+					#		self.setRequest(handle.geturl()) #TODO reauth?
+					#		msg += '. Attempting alternate connect'
+					#	else:
+					#		retry = 0
+					#	LM.error(msg,LM._LogExtra(*sr,exc=he,url=self.getRequestStr(),rty=0))
+					#	continue
 					if re.search('401|500',str(he)):
 						msg = 'HTTP Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
 						LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
-						retry -= 1
 						continue
 					elif re.search('403',str(he)):
 						msg = 'HTTP Error {0} Returns {1}. Attempt {2} (consider proxy)'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
 						LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
-						retry -= 1
 						continue
 					elif re.search('502',str(he)):
 						msg = 'Proxy Error {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
 						LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
-						retry -= 1
 						continue
 					elif re.search('410',str(he)):
 						msg = 'Layer removed {0} Returns {1}. Attempt {2}'.format(req_str,he,MAX_RETRY_ATTEMPTS-retry)
@@ -373,25 +398,27 @@ class LDSAPI(ABC):
 					else:
 						msg = 'Error with request {0} returns {1}'.format(req_str,he)
 						LM.error(msg,LM._LogExtra(*sr,exc=he,url=req_str,rty=retry))
-						retry -= 1
 						continue
 				else:
 					#Retries have been exhausted, raise the active httpexception
 					raise HTTPError(he.msg+msg)
-			except http.client.RemoteDisconnected as rd:
-				LM.warn('Remote Disconnect on connect {}'.format(rd),
-					LM._LogExtra(*sr,exc=rd,rty=retry))
+			except HttpResponseError as rd:
+				LM.warning('Disconnect. {}'.format(rd),
+					LM._LogExtra(*sr,exc=rd,url=req_str,rty=retry))
 				LDSAPI.sleepIncr(retry)
-				retry -= 1
 				continue
 			except URLError as ue:
-				LM.warn('URL error on connect {}'.format(ue),
-					LM._LogExtra(*sr,exc=ue,rty=retry))
-				if re.search('Connection refused',str(ue)):
+				LM.warning('URL error on connect {}'.format(ue),
+					LM._LogExtra(*sr,exc=ue,url=req_str,rty=retry))
+				if re.search('Connection refused|violation of protocol',str(ue)):
 					LDSAPI.sleepIncr(retry)
-					retry -= 1
-					continue
-				raise ue
+				continue
+				#raise ue
+			except ConnectionError as ce:
+				LM.warning('Error on connection. {}'.format(ce),
+					LM._LogExtra(*sr,exc=ce,url=req_str,rty=retry))
+				LDSAPI.sleepIncr(retry)
+				continue
 			except ValueError as ve:
 				LM.error('Value error on connect {}'.format(ve),LM._LogExtra(*sr,exc=ve,url=req_str,rty=retry))
 				raise ve
@@ -432,10 +459,14 @@ class LDSAPI(ABC):
 				#api.dispReq(api.req)
 				#api.dispRes(api.res)
 			except HTTPError as he:
-				LM.error('HTTP Error on page fetch '+he,LM._LogExtra(*sr,exc=he,url=pstr))
+				LM.error('HTTP Error on page fetch {}'.format(he),LM._LogExtra(*sr,exc=he,url=pstr))
 				morepages = False
 				raise
 				#continue
+			except Exception as e:
+				#Outer catch of unknown errors
+				LM.error('Error on page fetch {}'.format(he),LM._LogExtra(*sr,exc=he,url=pstr))
+				raise
 			# The logic here is a bit redundant but basically if no last page found then its prob the last page
 			# otherwise save the last page value and compare to current page. If they're equal get off loop
 			if 'page-last' in self.head: 
@@ -453,8 +484,8 @@ class LDSAPI(ABC):
 	
 	@staticmethod
 	def sleepIncr(r):
-		t = (MAX_RETRY_ATTEMPTS-r)*SLEEP_RETRY_INCR
-		print('tock' if t%2 else 'tick',t)
+		t = (INIT_MAX_RETRY_ATTEMPTS-r)*SLEEP_RETRY_INCR
+		print('tock' if t%2 else 'tick',t,'{}/{}'.format(r,INIT_MAX_RETRY_ATTEMPTS))
 		time.sleep(t)
 		
 	@staticmethod
@@ -583,8 +614,8 @@ class DataAPI(LDSAPI):
 	def __init__(self):
 		super(DataAPI,self).__init__()
 		
-	def setParams(self, sec='list', pth='dgt_data', host=LDSAPI.url_def, format='json', id=None, version=None, type=None):
-		super(DataAPI,self).setCommonParams(host=host,format=format,sec=sec,pth=pth)
+	def setParams(self, sec='list', pth='dgt_data', host=LDSAPI.url_def, fmt='json', id=None, version=None, type=None):
+		super(DataAPI,self).setCommonParams(host=host,fmt=fmt,sec=sec,pth=pth)
 		
 		if id and re.search('{id}',self.path): self.path = self.path.replace('{id}',str(id))
 		if version and re.search('{version}',self.path): self.path = self.path.replace('{version}',str(version))
@@ -622,8 +653,8 @@ class SourceAPI(LDSAPI):
 	def __init__(self):
 		super(SourceAPI,self).__init__()
 		
-	def setParams(self,sec='list',pth='sgt_sources',host='lds-l',format='json',id=None,type=None,source_id=None,scan_id=None,datasource_id=None):
-		super(DataAPI,self).setCommonParams(host=host,format=format,sec=sec,pth=pth)
+	def setParams(self,sec='list',pth='sgt_sources',host='lds-l',fmt='json',id=None,type=None,source_id=None,scan_id=None,datasource_id=None):
+		super(DataAPI,self).setCommonParams(host=host,fmt=fmt,sec=sec,pth=pth)
 
 		#insert optional args if available
 		if id and re.search('{id}',self.path): self.path = self.path.replace('{id}',str(id))
@@ -664,8 +695,8 @@ class RedactionAPI(LDSAPI):
 	def __init__(self):
 		super(RedactionAPI,self).__init__()
 		
-	def setParams(self,sec='list',pth='rgt_disp',h='lds-l',format='json',id=None,redaction=None):
-		super(DataAPI,self).setCommonParams(host=h,format=format,sec=sec,pth=pth)
+	def setParams(self,sec='list',pth='rgt_disp',h='lds-l',fmt='json',id=None,redaction=None):
+		super(DataAPI,self).setCommonParams(host=h,fmt=fmt,sec=sec,pth=pth)
 		
 		#insert optional args if available
 		if id and re.search('{id}',self.path): self.path = self.path.replace('{id}',str(id))
@@ -832,7 +863,7 @@ class DataAccess(APIAccess):
 									
 	def _readFields(self,idfunc,pagereq):
 		'''Read the fields from selected (predefined) pages'''
-		detail,herror = {},{}
+		detail,herror = {},{}		
 		for i in idfunc():
 			#print ('WARNING. READING LDS-API-ID SUBSET',i)
 			detail[str(i)],herror[str(i)] = self._readDetail(i,pagereq)
@@ -936,72 +967,72 @@ class DataAccess(APIAccess):
 
 '''Copied from LDSChecker for availability'''
 		
-class AuthenticationException(Exception):pass
-class Authentication(object):
-	'''Static methods to read keys/user/pass from files'''
-		
-	@staticmethod
-	def apikey(keyfile,kk='key',keyindex=None):
-		'''Returns current key from a keyfile advancing KEYINDEX on subsequent calls (if ki not provided)'''
-		global KEYINDEX
-		key = Authentication.searchfile(keyfile,'{0}'.format(kk))
-		if key: return key
-		key = Authentication.searchfile(keyfile,'{0}{1}'.format(kk,keyindex or KEYINDEX))
-		if not key and not keyindex:
-			KEYINDEX = 0
-			key = Authentication.searchfile(keyfile,'{0}{1}'.format(kk,KEYINDEX))
-		elif not keyindex:
-			KEYINDEX += 1
-		return key
-	
-	@staticmethod
-	def direct(value):
-		'''Returns arg for cases where user just wants to submit a key/userpass directly'''
-		return value
-		
-	@staticmethod
-	def creds(cfile):
-		'''Read CIFS credentials file'''
-		return (Authentication.searchfile(cfile,'username'),\
-				Authentication.searchfile(cfile,'password'),\
-				Authentication.searchfile(cfile, 'domain'))
-		
-	@staticmethod
-	def userpass(cfile):
-		return creds(cfile)[:2]
-			
-	#@staticmethod
-	#def userpass(upfile):
-	#	return (Authentication.searchfile(upfile,'username'),Authentication.searchfile(upfile,'password'))
-	
-	@staticmethod
-	def searchfile(spf,skey,default=None):
-		'''Given a file name incl path look for the file in the provided path, the home dir and 
-		the current dir then checks this file for the key/val named in skey'''
-		#value = default
-		#look in current then app then home
-		sp,sf = os.path.split(spf)
-		spath = (sp,'',os.path.expanduser('~'),os.path.dirname(__file__))
-		verified = [os.path.join(p,sf) for p in spath if os.path.lexists(os.path.join(p,sf))]
-		if not verified:
-			LM.error('Cannot find file '+sf,LM._LogExtra('LAAs','sf'))
-			raise AuthenticationException('Cannot find requested file {}'.format(sf))
-		with open(verified[0],'r') as h:
-			for line in h.readlines():
-				k = re.search('^{key}=(.*)$'.format(key=skey),line)
-				if k: return k.group(1)
-		return default
-	
-	@staticmethod
-	def getHeader(korb,kfile):
-		'''Convenience method for auth header'''
-		if korb.lower() == 'basic':
-			b64s = base64.encodestring('{0}:{1}'.format(*Authentication.userpass(kfile))).replace('\n', '')
-			return ('Authorization', 'Basic {0}'.format(b64s))
-		elif korb.lower() == 'key':
-			key = Authentication.apikey(kfile)
-			return ('Authorization', 'key {0}'.format(key))
-		return None # Throw something
+# class AuthenticationException(Exception):pass
+# class Authentication(object):
+# 	'''Static methods to read keys/user/pass from files'''
+# 		
+# 	@staticmethod
+# 	def apikey(keyfile,kk='key',keyindex=None):
+# 		'''Returns current key from a keyfile advancing KEYINDEX on subsequent calls (if ki not provided)'''
+# 		global KEYINDEX
+# 		key = Authentication.searchfile(keyfile,'{0}'.format(kk))
+# 		if key: return key
+# 		key = Authentication.searchfile(keyfile,'{0}{1}'.format(kk,keyindex or KEYINDEX))
+# 		if not key and not keyindex:
+# 			KEYINDEX = 0
+# 			key = Authentication.searchfile(keyfile,'{0}{1}'.format(kk,KEYINDEX))
+# 		elif not keyindex:
+# 			KEYINDEX += 1
+# 		return key
+# 	
+# 	@staticmethod
+# 	def direct(value):
+# 		'''Returns arg for cases where user just wants to submit a key/userpass directly'''
+# 		return value
+# 		
+# 	@staticmethod
+# 	def creds(cfile):
+# 		'''Read CIFS credentials file'''
+# 		return (Authentication.searchfile(cfile,'username'),\
+# 				Authentication.searchfile(cfile,'password'),\
+# 				Authentication.searchfile(cfile, 'domain'))
+# 		
+# 	@staticmethod
+# 	def userpass(cfile):
+# 		return creds(cfile)[:2]
+# 			
+# 	#@staticmethod
+# 	#def userpass(upfile):
+# 	#	return (Authentication.searchfile(upfile,'username'),Authentication.searchfile(upfile,'password'))
+# 	
+# 	@staticmethod
+# 	def searchfile(spf,skey,default=None):
+# 		'''Given a file name incl path look for the file in the provided path, the home dir and 
+# 		the current dir then checks this file for the key/val named in skey'''
+# 		#value = default
+# 		#look in current then app then home
+# 		sp,sf = os.path.split(spf)
+# 		spath = (sp,'',os.path.expanduser('~'),os.path.dirname(__file__))
+# 		verified = [os.path.join(p,sf) for p in spath if os.path.lexists(os.path.join(p,sf))]
+# 		if not verified:
+# 			LM.error('Cannot find file '+sf,LM._LogExtra('LAAs','sf'))
+# 			raise AuthenticationException('Cannot find requested file {}'.format(sf))
+# 		with open(verified[0],'r') as h:
+# 			for line in h.readlines():
+# 				k = re.search('^{key}=(.*)$'.format(key=skey),line)
+# 				if k: return k.group(1)
+# 		return default
+# 	
+# 	@staticmethod
+# 	def getHeader(korb,kfile):
+# 		'''Convenience method for auth header'''
+# 		if korb.lower() == 'basic':
+# 			b64s = base64.encodestring('{0}:{1}'.format(*Authentication.userpass(kfile))).replace('\n', '')
+# 			return ('Authorization', 'Basic {0}'.format(b64s))
+# 		elif korb.lower() == 'key':
+# 			key = Authentication.apikey(kfile)
+# 			return ('Authorization', 'key {0}'.format(key))
+# 		return None # Throw something
 
 class APIFunctionTest(object):
 	'''Class will not run as-is but illustrates by example api ue and the paging mechanism'''

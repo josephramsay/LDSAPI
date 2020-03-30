@@ -116,6 +116,9 @@ class LXMLtree(object):
 		return [LXMLelem(e,wrap=True) for e in reclist]
 	
 class LXMLelem(object):
+	#Python versions <2.7 dont parse namespace aliases
+	SVI = sys.version_info[0]+(sys.version_info[1]/10)>2.6
+	
 	'''Wrapper for the LXML element object, hacked to also act as a self wrapper for list/findall queries'''
 	def __init__(self,parent,wrap=False,root=False,path=''):
 		if wrap:
@@ -138,9 +141,9 @@ class LXMLelem(object):
 	
 	def find(self,url,namespaces=None):
 		'''returns element'''
-		return self._elem.find(url,namespaces) if sys.version_info[1]>6 else self._elem.find(LXMLetree._subNS(url, namespaces))
+		return self._elem.find(url,namespaces) if self.SVI else self._elem.find(LXMLetree._subNS(url, namespaces))
 	
 	def findall(self,url,namespaces=None):
-		reclist = self._elem.findall(url,namespaces) if sys.version_info[1]>6 else self._elem.findall(LXMLetree._subNS(url, namespaces))
+		reclist = self._elem.findall(url,namespaces) if self.SVI else self._elem.findall(LXMLetree._subNS(url, namespaces))
 		return [LXMLelem(e,wrap=True) for e in reclist]	
 	
